@@ -77,63 +77,35 @@ if __name__ == '__main__':
    # load data from ops/data_ops.py
    Data = data_ops.loadData(DATASET, BATCH_SIZE)
 
-   print 'exiting'
-   exit()
-
    # number of training images
    num_train = Data.count
    
-   # The gray 'lightness' channel in range [-1, 1]
-   L_image   = Data.inputs
+   # The image from data domain A
+   inputsA = Data.inputsA
    
-   # The color channels in [-1, 1] range
-   ab_image  = Data.targets
+   # The image from data domain B
+   inputsB = Data.inputsB
 
-   if ARCHITECTURE == 'pix2pix':
-      # generated ab values from generator
-      gen_ab = pix2pix.netG(L_image, NUM_GPU, UPCONVS)
-   elif ARCHITECTURE == 'colcolgan':
-      gen_ab = ColColGAN.netG(L_image, NUM_GPU)
+   # TODO it's actually two different generators, not just one
+   # transform domain A to domain B, then back to domain A, minimize L1
+   AtoB = network.netG(inputsA)
+   BtoA = network.netG(inputsB)
 
-   # D's decision on real images and fake images
-   if LOSS_METHOD == 'energy':
-      D_real, embeddings_real, decoded_real = pix2pix.energyNetD(L_image, ab_image, BATCH_SIZE)
-      D_fake, embeddings_fake, decoded_fake = pix2pix.energyNetD(L_image, gen_ab, BATCH_SIZE, reuse=True)
-   else:
-      if ARCHITECTURE == 'pix2pix':
-         D_real = pix2pix.netD(L_image, ab_image, NUM_GPU)
-         D_fake = pix2pix.netD(L_image, gen_ab, NUM_GPU, reuse=True)
-      elif ARCHITECTURE == 'colcolgan':
-         D_real = ColColGAN.netD(L_image, ab_image, NUM_GPU)
-         D_fake = ColColGAN.netD(L_image, gen_ab, NUM_GPU, reuse=True)
+   Arecon = network.netG(BtoA)
+   Brecon = network.netG(AtoB)
+
+   AR_loss = tf.reduce_mean(tf.abs(Arecon-inputsA))
+   BR_loss = tf.reduce_mean(tf.abs(Brecon-inputsB))
+
+   L_cyc = tf.reduce_mean(tf.abs(AR_loss-BR_loss))
 
    e = 1e-12
-   if LOSS_METHOD == 'wasserstein':
-      print 'Using Wasserstein loss'
-      D_real = lrelu(D_real)
-      D_fake = lrelu(D_fake)
-      gen_loss_GAN = tf.reduce_mean(D_fake)
-      
-      if L1_WEIGHT > 0.0:
-         print 'Using an L1 weight of',L1_WEIGHT
-         gen_loss_L1  = tf.reduce_mean(tf.abs(ab_image-gen_ab))
-         errG         = gen_loss_GAN*GAN_WEIGHT + gen_loss_L1*L1_WEIGHT
-      if L2_WEIGHT > 0.0:
-         print 'Using an L2 weight of',L2_WEIGHT
-         gen_loss_L2  = tf.reduce_mean(tf.nn.l2_loss(ab_image-gen_ab))
-         errG         = gen_loss_GAN*GAN_WEIGHT + gen_loss_L2*L2_WEIGHT
-      if L1_WEIGHT <= 0.0 and L2_WEIGHT <= 0.0:
-         print 'Just using GAN loss, no L1 or L2'
-         errG = gen_loss_GAN
-      errD = tf.reduce_mean(D_real - D_fake)
-
    if LOSS_METHOD == 'least_squares':
       print 'Using least squares loss'
       # Least squares requires sigmoid activation on D
       errD_real = tf.nn.sigmoid(D_real)
       errD_fake = tf.nn.sigmoid(D_fake)
       
-      #gen_loss_GAN = tf.reduce_mean(tf.square(errD_fake - 1))
       gen_loss_GAN = 0.5*(tf.reduce_mean(tf.square(errD_fake - 1)))
       if L1_WEIGHT > 0.0:
          print 'Using an L1 weight of',L1_WEIGHT
@@ -146,10 +118,8 @@ if __name__ == '__main__':
       elif L1_WEIGHT <= 0.0 and L2_WEIGHT <= 0.0:
          print 'Just using GAN loss, no L1 or L2'
          errG = gen_loss_GAN
-      #errD = tf.reduce_mean(tf.square(errD_real - 1) + tf.square(errD_fake))
       errD = tf.reduce_mean(0.5*(tf.square(errD_real - 1)) + 0.5*(tf.square(errD_fake)))
-
-   if LOSS_METHOD == 'gan' or LOSS_METHOD == 'cnn':
+   if LOSS_METHOD == 'gan':
       print 'Using original GAN loss'
       if LOSS_METHOD is not 'cnn':
          D_real = tf.nn.sigmoid(D_real)
