@@ -4,121 +4,82 @@ from scipy import misc
 import numpy as np
 import argparse
 import ntpath
-import pix2pix
 import sys
 import os
 import time
-import ColColGAN
 
 sys.path.insert(0, 'ops/')
-sys.path.insert(0, 'config/')
-from tf_ops import *
 
+from tf_ops import *
 import data_ops
 
 if __name__ == '__main__':
    parser = argparse.ArgumentParser()
-   parser.add_argument('--PRETRAIN_EPOCHS',required=False,default=0,type=int,help='Number of epochs to pretrain')
-   parser.add_argument('--GAN_EPOCHS',     required=True,type=int,help='Number of epochs for GAN')
-   parser.add_argument('--ARCHITECTURE',   required=True,help='Architecture for the generator')
-   parser.add_argument('--DATASET',        required=True,help='The dataset to use')
-   parser.add_argument('--DATA_DIR',       required=True,help='Directory where data is')
-   parser.add_argument('--PRETRAIN_LR',    required=False,type=float,help='Learning rate for the pretrained network')
-   parser.add_argument('--BATCH_SIZE',     required=False,type=int,default=32,help='Batch size to use')
-   parser.add_argument('--GAN_LR',         required=False,type=float,default=2e-5,help='Learning rate for the GAN')
-   parser.add_argument('--NUM_GPU',        required=False,type=int,default=1,help='Use multiple GPUs or not')
-   parser.add_argument('--JITTER',         required=False,type=int,default=1,help='Whether or not to add jitter')
-   parser.add_argument('--NUM_CRITIC',     required=False,type=int,default=5,help='Number of critics')
-   parser.add_argument('--LOSS_METHOD',    required=False,default='wasserstein',help='Loss function for GAN',
+   parser.add_argument('--ARCHITECTURE', required=True,help='Architecture for the generator')
+   parser.add_argument('--EPOCHS',       required=False,default=100,type=int,help='Number of epochs for GAN')
+   parser.add_argument('--DATASET',      required=True,help='The dataset to use')
+   parser.add_argument('--LEARNING_RATE',required=False,default=0.0002,type=float,help='Learning rate for the pretrained network')
+   parser.add_argument('--BATCH_SIZE',   required=False,type=int,default=32,help='Batch size to use')
+   parser.add_argument('--LOSS_METHOD',  required=False,default='wasserstein',help='Loss function for GAN',
       choices=['wasserstein','least_squares','energy','gan','cnn'])
-   parser.add_argument('--SIZE',           required=False,default=256,help='size of the image',type=int)
-   parser.add_argument('--LOAD_MODEL',     required=False,help='Load a trained model')
-   parser.add_argument('--L1_WEIGHT',      required=False,help='weight of L1 for combined loss',type=float,default=100.0)
-   parser.add_argument('--L2_WEIGHT',      required=False,help='weight of L2 for combined loss',type=float,default=0.0)
-   parser.add_argument('--GAN_WEIGHT',     required=False,help='weight of GAN for combined loss',type=float,default=1.0)
-   parser.add_argument('--UPCONVS',        required=False,help='flag for using upconvs or not',type=int,default=1)
+   parser.add_argument('--CYCLE_WEIGHT', required=False,help='weight of L2 for combined loss',type=float,default=0.0)
    a = parser.parse_args()
 
-   PRETRAIN_EPOCHS = a.PRETRAIN_EPOCHS
-   GAN_EPOCHS      = a.GAN_EPOCHS
-   ARCHITECTURE    = a.ARCHITECTURE
-   DATASET         = a.DATASET
-   DATA_DIR        = a.DATA_DIR
-   PRETRAIN_LR     = a.PRETRAIN_LR
-   GAN_LR          = a.GAN_LR
-   NUM_GPU         = a.NUM_GPU
-   LOSS_METHOD     = a.LOSS_METHOD
-   NUM_CRITIC      = a.NUM_CRITIC
-   BATCH_SIZE      = a.BATCH_SIZE
-   LOAD_MODEL      = a.LOAD_MODEL
-   JITTER          = bool(a.JITTER)
-   SIZE            = a.SIZE
-   L1_WEIGHT       = a.L1_WEIGHT
-   L2_WEIGHT       = a.L2_WEIGHT
-   GAN_WEIGHT      = a.GAN_WEIGHT
-   UPCONVS         = a.UPCONVS
+   ARCHITECTURE  = a.ARCHITECTURE
+   EPOCHS        = a.EPOCHS
+   DATASET       = a.DATASET
+   LEARNING_RATE = a.LEARNING_RATE
+   BATCH_SIZE    = a.BATCH_SIZE
+   LOSS_METHOD   = a.LOSS_METHOD
+   CYCLE_WEIGHT  = a.CYCLE_WEIGHT
    
-   EXPERIMENT_DIR = 'checkpoints/'+ARCHITECTURE+'_'+DATASET+'_'+LOSS_METHOD+'_'+str(PRETRAIN_EPOCHS)+'_'+str(GAN_EPOCHS)+'_'+str(PRETRAIN_LR)+'_'+str(NUM_CRITIC)+'_'+str(GAN_LR)+'_'+str(JITTER)+'_'+str(SIZE)+'_'+str(L1_WEIGHT)+'_'+str(L2_WEIGHT)+'_'+str(GAN_WEIGHT)+'_'+str(UPCONVS)+'/'
+   EXPERIMENT_DIR = 'checkpoints/ARCHITECTURE_'+ARCHITECTURE+'/DATASET_'+DATASET+'/LEARNING_RATE_'+str(LEARNING_RATE)+'/LOSS_'+LOSS_METHOD+'/CYCLE_'+str(CYCLE_WEIGHT)+'/'
+   print EXPERIMENT_DIR
+   
    IMAGES_DIR = EXPERIMENT_DIR+'images/'
 
    print
    print 'Creating',EXPERIMENT_DIR
-   try: os.mkdir('checkpoints/')
+   try: os.makedirs('checkpoints/')
    except: pass
-   try: os.mkdir(EXPERIMENT_DIR)
+   try: os.makedirs(EXPERIMENT_DIR)
    except: pass
-   try: os.mkdir(IMAGES_DIR)
+   try: os.makedirs(IMAGES_DIR)
    except: pass
-   
+
    # write all this info to a pickle file in the experiments directory
    exp_info = dict()
-   exp_info['PRETRAIN_EPOCHS'] = PRETRAIN_EPOCHS
-   exp_info['ARCHITECTURE']    = ARCHITECTURE
-   exp_info['LOSS_METHOD']     = LOSS_METHOD
-   exp_info['PRETRAIN_LR']     = PRETRAIN_LR
-   exp_info['GAN_EPOCHS']      = GAN_EPOCHS
-   exp_info['DATASET']         = DATASET
-   exp_info['DATA_DIR']        = DATA_DIR
-   exp_info['GAN_LR']          = GAN_LR
-   exp_info['NUM_GPU']         = NUM_GPU
-   exp_info['NUM_CRITIC']      = NUM_CRITIC
-   exp_info['BATCH_SIZE']      = BATCH_SIZE
-   exp_info['LOAD_MODEL']      = LOAD_MODEL
-   exp_info['JITTER']          = JITTER
-   exp_info['SIZE']            = SIZE
-   exp_info['L1_WEIGHT']       = L1_WEIGHT
-   exp_info['L2_WEIGHT']       = L2_WEIGHT
-   exp_info['GAN_WEIGHT']      = GAN_WEIGHT
-   exp_info['UPCONVS']          = UPCONVS
+   exp_info['ARCHITECTURE']  = ARCHITECTURE
+   exp_info['EPOCHS']        = EPOCHS
+   exp_info['DATASET']       = DATASET
+   exp_info['LEARNING_RATE'] = LEARNING_RATE
+   exp_info['BATCH_SIZE']    = BATCH_SIZE
+   exp_info['LOSS_METHOD']   = LOSS_METHOD
+   exp_info['CYCLE_WEIGHT']  = CYCLE_WEIGHT
    exp_pkl = open(EXPERIMENT_DIR+'info.pkl', 'wb')
    data = pickle.dumps(exp_info)
    exp_pkl.write(data)
    exp_pkl.close()
    
    print
-   print 'PRETRAIN_EPOCHS: ',PRETRAIN_EPOCHS
-   print 'GAN_EPOCHS:      ',GAN_EPOCHS
-   print 'ARCHITECTURE:    ',ARCHITECTURE
-   print 'LOSS_METHOD:     ',LOSS_METHOD
-   print 'PRETRAIN_LR:     ',PRETRAIN_LR
-   print 'DATASET:         ',DATASET
-   print 'DATA_DIR:        ',DATA_DIR
-   print 'GAN_LR:          ',GAN_LR
-   print 'NUM_GPU:         ',NUM_GPU
-   print 'NUM_CRITIC:      ',NUM_CRITIC
-   print 'LOAD_MODEL:      ',LOAD_MODEL
-   print 'JITTER:          ',JITTER
-   print 'SIZE:            ',SIZE
-   print 'L1_WEIGHT:       ',L1_WEIGHT
-   print 'L2_WEIGHT:       ',L2_WEIGHT
-   print 'GAN_WEIGHT:      ',GAN_WEIGHT
+   print 'ARCHITECTURE:  ',ARCHITECTURE
+   print 'EPOCHS:        ',EPOCHS
+   print 'DATASET:       ',DATASET
+   print 'LEARNING_RATE: ',LEARNING_RATE
+   print 'BATCH_SIZE:    ',BATCH_SIZE
+   print 'LOSS_METHOD:   ',LOSS_METHOD
+   print 'CYCLE_WEIGHT:  ',CYCLE_WEIGHT
    print
 
    # global step that is saved with a model to keep track of how many steps/epochs
    global_step = tf.Variable(0, name='global_step', trainable=False)
 
-   # load data
-   Data = data_ops.loadData(DATA_DIR, DATASET, BATCH_SIZE, jitter=JITTER, SIZE=SIZE)
+   # load data from ops/data_ops.py
+   Data = data_ops.loadData(DATASET, BATCH_SIZE)
+
+   print 'exiting'
+   exit()
+
    # number of training images
    num_train = Data.count
    
@@ -246,21 +207,21 @@ if __name__ == '__main__':
       clip_discriminator_var_op = [var.assign(tf.clip_by_value(var, clip_values[0], clip_values[1])) for var in d_vars]
 
    # MSE loss for pretraining
-   if PRETRAIN_EPOCHS > 0:
-      print 'Pretraining generator for',PRETRAIN_EPOCHS,'epochs...'
+   if EPOCHS > 0:
+      print 'Pretraining generator for',EPOCHS,'epochs...'
       mse_loss = tf.reduce_mean((ab_image-gen_ab)**2)
       #mse_train_op = tf.train.AdamOptimizer(learning_rate=PRETRAIN_LR,beta1=0.5).minimize(mse_loss, var_list=g_vars, global_step=global_step, colocate_gradients_with_ops=True)
       mse_train_op = tf.train.AdamOptimizer(learning_rate=PRETRAIN_LR).minimize(mse_loss, var_list=g_vars, global_step=global_step, colocate_gradients_with_ops=True)
       tf.add_to_collection('vars', mse_train_op)
       tf.summary.scalar('mse_loss', mse_loss)
    if LOSS_METHOD == 'wasserstein':
-      G_train_op = tf.train.RMSPropOptimizer(learning_rate=GAN_LR, decay=0.9).minimize(errG, var_list=g_vars, global_step=global_step, colocate_gradients_with_ops=True)
-      D_train_op = tf.train.RMSPropOptimizer(learning_rate=GAN_LR, decay=0.9).minimize(errD, var_list=d_vars, colocate_gradients_with_ops=True)
+      G_train_op = tf.train.RMSPropOptimizer(learning_rate=LEARNING_RATE, decay=0.9).minimize(errG, var_list=g_vars, global_step=global_step, colocate_gradients_with_ops=True)
+      D_train_op = tf.train.RMSPropOptimizer(learning_rate=LEARNING_RATE, decay=0.9).minimize(errD, var_list=d_vars, colocate_gradients_with_ops=True)
    else:
-      #G_train_op = tf.train.AdamOptimizer(learning_rate=GAN_LR,beta1=0.5).minimize(errG, var_list=g_vars, global_step=global_step, colocate_gradients_with_ops=True)
-      #D_train_op = tf.train.AdamOptimizer(learning_rate=GAN_LR,beta1=0.5).minimize(errD, var_list=d_vars, colocate_gradients_with_ops=True)
-      G_train_op = tf.train.AdamOptimizer(learning_rate=GAN_LR).minimize(errG, var_list=g_vars, global_step=global_step, colocate_gradients_with_ops=True)
-      D_train_op = tf.train.AdamOptimizer(learning_rate=GAN_LR).minimize(errD, var_list=d_vars, colocate_gradients_with_ops=True)
+      #G_train_op = tf.train.AdamOptimizer(learning_rate=LEARNING_RATE,beta1=0.5).minimize(errG, var_list=g_vars, global_step=global_step, colocate_gradients_with_ops=True)
+      #D_train_op = tf.train.AdamOptimizer(learning_rate=LEARNING_RATE,beta1=0.5).minimize(errD, var_list=d_vars, colocate_gradients_with_ops=True)
+      G_train_op = tf.train.AdamOptimizer(learning_rate=LEARNING_RATE).minimize(errG, var_list=g_vars, global_step=global_step, colocate_gradients_with_ops=True)
+      D_train_op = tf.train.AdamOptimizer(learning_rate=LEARNING_RATE).minimize(errD, var_list=d_vars, colocate_gradients_with_ops=True)
 
    saver = tf.train.Saver(max_to_keep=1)
    
@@ -302,7 +263,7 @@ if __name__ == '__main__':
    start = time.time()
    while True:
       epoch_num = step/(num_train/BATCH_SIZE)
-      while epoch_num < PRETRAIN_EPOCHS:
+      while epoch_num < EPOCHS:
          epoch_num = step/(num_train/BATCH_SIZE)
          s = time.time()
          sess.run(mse_train_op)
@@ -316,10 +277,10 @@ if __name__ == '__main__':
             print
             saver.save(sess, EXPERIMENT_DIR+'checkpoint-'+str(step))
             saver.export_meta_graph(EXPERIMENT_DIR+'checkpoint-'+str(step)+'.meta')
-      if PRETRAIN_EPOCHS > 0:
+      if EPOCHS > 0:
          print 'Done pretraining....training D and G now'
          epoch_num = 0
-      while epoch_num < GAN_EPOCHS:
+      while epoch_num < EPOCHS:
          epoch_num = step/(num_train/BATCH_SIZE)
          s = time.time()
 
