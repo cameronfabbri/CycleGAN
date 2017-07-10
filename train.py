@@ -44,13 +44,9 @@ if __name__ == '__main__':
 
    print
    print 'Creating',EXPERIMENT_DIR
-   try: os.makedirs('checkpoints/')
-   except: pass
-   try: os.makedirs(EXPERIMENT_DIR)
-   except: pass
    try: os.makedirs(IMAGES_DIR)
    except: pass
-
+   
    # write all this info to a pickle file in the experiments directory
    exp_info = dict()
    exp_info['ARCHITECTURE']  = ARCHITECTURE
@@ -84,26 +80,26 @@ if __name__ == '__main__':
    # number of training images
    num_train = Data.count
    
-   # The image from data domain A
-   inputsA = Data.inputsA
+   # The image from data domain A in range [-1,1]
+   inputsA = data_ops.preprocess(Data.inputsA)
    
-   # The image from data domain B
-   inputsB = Data.inputsB
+   # The image from data domain B in range [-1,1]
+   inputsB = data_ops.preprocess(Data.inputsB)
 
    # generate images
-   fakeB = network.netG(inputsA, 'atob1')
-   fakeA = network.netG(inputsB, 'btoa1')
+   fakeB = network.netG(inputsA, 'atob') # A to B
+   fakeA = network.netG(inputsB, 'btoa') # B to A
 
    # cycle part for reconstruction
-   Arecon = network.netG(fakeB, 'btoa2')
-   Brecon = network.netG(fakeA, 'atob2')
+   Brecon = network.netG(fakeA, 'atob', reuse=True) # A to B
+   Arecon = network.netG(fakeB, 'btoa', reuse=True) # B to A
 
    # L1 loss for cycles
-   AR_loss = tf.reduce_mean(tf.abs(Arecon-inputsA))
-   BR_loss = tf.reduce_mean(tf.abs(Brecon-inputsB))
+   AR_loss = CYCLE_WEIGHT*tf.reduce_mean(tf.abs(Arecon-inputsA))
+   BR_loss = CYCLE_WEIGHT*tf.reduce_mean(tf.abs(Brecon-inputsB))
 
    # total cycle loss
-   L_cyc = tf.reduce_mean(tf.abs(AR_loss-BR_loss))
+   L_cyc = tf.reduce_mean(AR_loss+BR_loss)
 
    # send the real domain A images to d
    discA = network.netD(inputsA, 'domain_a')
@@ -119,7 +115,23 @@ if __name__ == '__main__':
 
    D_real = discA+discB
    D_fake = discA_gen+discB_gen
+  
+   # now get all testing stuff
+   testData = data_ops.loadData(DATASET, BATCH_SIZE, train=False)
+   num_test = testData.count
+
+   # convert images to [-1, 1]
+   test_inputsA = data_ops.preprocess(testData.inputsA)
+   test_inputsB = data_ops.preprocess(testData.inputsB)
    
+   # send each through the generator
+   test_BtoA = data_ops.deprocess(network.netG(test_inputsB, 'atob', reuse=True))
+   test_AtoB = data_ops.deprocess(network.netG(test_inputsA, 'btoa', reuse=True))
+
+   # convert back to [0, 255]
+   test_inputsA = data_ops.deprocess(test_inputsA)
+   test_inputsB = data_ops.deprocess(test_inputsB)
+
    # added for safe log
    e = 1e-12
    if LOSS_METHOD == 'least_squares':
@@ -138,7 +150,9 @@ if __name__ == '__main__':
       errG = tf.reduce_mean(-tf.log(D_fake + e))
 
       errD = tf.reduce_mean(-(tf.log(D_real+e)+tf.log(1-D_fake+e)))
-   
+
+   errG = errG + L_cyc
+
    # tensorboard summaries
    try: tf.summary.scalar('d_loss', tf.reduce_mean(errD))
    except:pass
@@ -154,11 +168,11 @@ if __name__ == '__main__':
       # clip weights in D
       clip_values = [-0.005, 0.005]
       clip_discriminator_var_op = [var.assign(tf.clip_by_value(var, clip_values[0], clip_values[1])) for var in d_vars]
-      G_train_op = tf.train.RMSPropOptimizer(learning_rate=LEARNING_RATE).minimize(errG, var_list=g_vars, global_step=global_step, colocate_gradients_with_ops=True)
-      D_train_op = tf.train.RMSPropOptimizer(learning_rate=LEARNING_RATE).minimize(errD, var_list=d_vars, global_step=global_step, colocate_gradients_with_ops=True)
+      G_train_op = tf.train.RMSPropOptimizer(learning_rate=LEARNING_RATE,beta1=0.5).minimize(errG, var_list=g_vars, global_step=global_step, colocate_gradients_with_ops=True)
+      D_train_op = tf.train.RMSPropOptimizer(learning_rate=LEARNING_RATE,beta1=0.5).minimize(errD, var_list=d_vars, global_step=global_step, colocate_gradients_with_ops=True)
    else:
-      G_train_op = tf.train.AdamOptimizer(learning_rate=LEARNING_RATE).minimize(errG, var_list=g_vars, global_step=global_step, colocate_gradients_with_ops=True)
-      D_train_op = tf.train.AdamOptimizer(learning_rate=LEARNING_RATE).minimize(errD, var_list=d_vars, colocate_gradients_with_ops=True)
+      G_train_op = tf.train.AdamOptimizer(learning_rate=LEARNING_RATE,beta1=0.5).minimize(errG, var_list=g_vars, global_step=global_step, colocate_gradients_with_ops=True)
+      D_train_op = tf.train.AdamOptimizer(learning_rate=LEARNING_RATE,beta1=0.5).minimize(errD, var_list=d_vars, colocate_gradients_with_ops=True)
 
    saver = tf.train.Saver(max_to_keep=1)
    
@@ -214,11 +228,23 @@ if __name__ == '__main__':
          print 'epoch:',epoch_num,'step:',step,'D loss:',D_loss,'G_loss:',G_loss
          step += 1
          
-         if step%500 == 0:
+         if step%100 == 0:
             print 'Saving model...'
             saver.save(sess, EXPERIMENT_DIR+'checkpoint-'+str(step))
             saver.export_meta_graph(EXPERIMENT_DIR+'checkpoint-'+str(step)+'.meta')
             print 'Model saved\n'
+            
+            # now get some test images (just the first in the batch)
+            #real_A = sess.run(test_inputsA)[0]
+            #real_B = sess.run(test_inputsB)[0]
+
+            gen_A  = sess.run(test_BtoA)[0]
+            gen_B  = sess.run(test_AtoB)[0]
+
+            #misc.imsave(IMAGES_DIR+'real_A_'+str(step)+'.png', real_A)
+            #misc.imsave(IMAGES_DIR+'real_B_'+str(step)+'.png', real_B)
+            misc.imsave(IMAGES_DIR+'gen_A_'+str(step)+'.png', gen_A)
+            misc.imsave(IMAGES_DIR+'gen_B_'+str(step)+'.png', gen_B)
 
       print 'Finished training', time.time()-start
       saver.save(sess, EXPERIMENT_DIR+'checkpoint-'+str(step))

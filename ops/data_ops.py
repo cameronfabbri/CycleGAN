@@ -24,58 +24,16 @@ import cPickle as pickle
 
 Data = collections.namedtuple('trainData', 'inputsA, inputsB, count')
 
+# [0, 255] => [-1, 1]
 def preprocess(image):
-    with tf.name_scope('preprocess'):
-        # [0, 1] => [-1, 1]
-        return image * 2 - 1
+   with tf.name_scope('preprocess'):
+      image = tf.image.convert_image_dtype(image, dtype=tf.float32)
+      return (image/127.50)-1.0
 
-
+# [-1, 1] => [0, 1]
 def deprocess(image):
-    with tf.name_scope('deprocess'):
-        # [-1, 1] => [0, 1]
-        return (image + 1) / 2
-
-
-def preprocess_lab(lab):
-    with tf.name_scope('preprocess_lab'):
-        L_chan, a_chan, b_chan = tf.unstack(lab, axis=2)
-        # L_chan: black and white with input range [0, 100]
-        # a_chan/b_chan: color channels with input range ~[-110, 110], not exact
-        # [0, 100] => [-1, 1],  ~[-110, 110] => [-1, 1]
-        return [L_chan / 50 - 1, a_chan / 110, b_chan / 110]
-
-
-def deprocess_lab(L_chan, a_chan, b_chan):
-    with tf.name_scope('deprocess_lab'):
-        # this is axis=3 instead of axis=2 because we process individual images but deprocess batches
-        return tf.stack([(L_chan + 1) / 2 * 100, a_chan * 110, b_chan * 110], axis=3)
-        #return tf.stack([(L_chan + 1) / 2 * 100, a_chan * 110, b_chan * 110], axis=2)
-
-
-def augment(image, brightness):
-    # (a, b) color channels, combine with L channel and convert to rgb
-    a_chan, b_chan = tf.unstack(image, axis=3)
-    L_chan = tf.squeeze(brightness, axis=3)
-    lab = deprocess_lab(L_chan, a_chan, b_chan)
-    rgb = lab_to_rgb(lab)
-    return rgb
-
-
-
-def check_image(image):
-    assertion = tf.assert_equal(tf.shape(image)[-1], 3, message='image must have 3 color channels')
-    with tf.control_dependencies([assertion]):
-        image = tf.identity(image)
-
-    if image.get_shape().ndims not in (3, 4):
-        raise ValueError('image must be either 3 or 4 dimensions')
-
-    # make the last dimension 3 so that you can unstack the colors
-    shape = list(image.get_shape())
-    shape[-1] = 3
-    image.set_shape(shape)
-    return image
-
+   with tf.name_scope('deprocess'):
+      return tf.image.convert_image_dtype((image+1.0)/2.0, tf.uint8)
 
 def getPaths(data_dir, gray_images=None, ext='jpg'):
    pattern   = '*.'+ext
@@ -159,8 +117,8 @@ def loadData(dataset, batch_size, train=True):
       with tf.name_scope('inputsB'):
          inputsB = transform(inputsB)
    else:
-      input_images = tf.image.resize_images(inputs, [crop_size, crop_size], method=tf.image.ResizeMethod.AREA)
-      target_images = tf.image.resize_images(targets, [crop_size, crop_size], method=tf.image.ResizeMethod.AREA)
+      input_images = tf.image.resize_images(inputsA, [crop_size, crop_size], method=tf.image.ResizeMethod.AREA)
+      target_images = tf.image.resize_images(inputsB, [crop_size, crop_size], method=tf.image.ResizeMethod.AREA)
 
    inputsA_batch, inputsB_batch = tf.train.batch([inputsA, inputsB], batch_size=batch_size)
 
